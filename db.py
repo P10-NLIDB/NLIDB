@@ -104,7 +104,7 @@ def init_user_interactions_db():
             # Enable pgvector extension
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
             
-            # Create user interactions table (includes a database_name column)
+            # Create user interactions table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_interactions (
                     id SERIAL PRIMARY KEY,
@@ -117,7 +117,7 @@ def init_user_interactions_db():
                 )
             """)
 
-            # Create an HNSW index for fast vector similarity search
+            # Create HNSW index
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS query_embedding_hnsw_idx
                 ON user_interactions USING hnsw (query_embedding);
@@ -159,3 +159,57 @@ def get_all_interactions():
     db_name = USER_INTERACTIONS_DB
     query = "SELECT * FROM user_interactions ORDER BY timestamp DESC"
     return execute_query(db_name, query, fetch=True)
+
+
+def initialize_system(databases, reset=False):
+    """
+    Initializes the entire system:
+    1. Creates the user interactions database (if needed)
+    2. Sets up connection pools for Spider databases
+    3. Initializes the user interactions table
+    """
+    print("Initializing System...")
+    
+    # Create the main user interactions database
+    create_database(USER_INTERACTIONS_DB, reset=reset)
+    setup_connection_pool(USER_INTERACTIONS_DB)
+
+    # Initialize the user interactions table
+    init_user_interactions_db()
+
+    # Setup connection pools for Spider databases
+    # Maybe change this part so that we dont have a billion database connections because of spiders 100s of databases...
+    for db in databases:
+        setup_connection_pool(db)
+    
+    print("\System Initialization Complete\n")
+
+# Example usage
+if __name__ == "__main__":
+    # Define Spider dataset databases
+    # Update this to dynamically load all databases
+    spider_dbs = ["restaurants"] 
+
+    # Initialize the system (set reset=True to start fresh)
+    initialize_system(spider_dbs, reset=False)
+
+    # Insert a new user interaction into a Spider database (Example: restaurants)
+    interaction_id = insert_user_interaction(
+        "restaurants",
+        "Find all restaurants with a rating above 4.5",
+        [0.1] * 768,
+        "SELECT name FROM restaurants WHERE rating > 4.5;",
+        5
+    )
+    print(f"Inserted interaction with ID: {interaction_id}")
+
+    # Search for similar queries
+    query_vector = [0.1] * 768
+    similar_queries = search_similar_queries(query_vector, SimilarityMethod.COSINE)
+
+    print("\nSimilar Queries:")
+    for row in similar_queries:
+        print(row)
+
+    # Close all connection pools
+    close_all_pools()
