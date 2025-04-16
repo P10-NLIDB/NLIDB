@@ -40,18 +40,21 @@ def build_pyg_graph(entry, db, turn='train', use_syntax=False):
     schema_offset = q_num
     for i in range(len(schema_rel)):
         for j in range(len(schema_rel[0])):
-            if schema_rel[i][j] != 'none' and schema_rel[i][j] != "":
+            rel = schema_rel[i][j]
+            if rel != 'none' and rel != "" and not rel.endswith("-generic"):
                 edge_index.append([schema_offset + i, schema_offset + j])
 
     # 2. Question ↔ Schema links
-    q_schema, schema_q = entry[f'schema_linking_{turn}']  # q_num x (t + c), (t + c) x q_num
+    q_schema, schema_q = entry['schema_linking']  # q_num x (t + c), (t + c) x q_num
     for i in range(q_num):
         for j in range(t_num + c_num):
-            if q_schema[i][j] != 'question-table-nomatch' and q_schema[i][j] != 'question-column-nomatch':
+            rel = q_schema[i][j]
+            if not rel.endswith("-nomatch") and not rel.endswith("-generic"):
                 edge_index.append([i, q_num + j])
     for j in range(t_num + c_num):
         for i in range(q_num):
-            if schema_q[j][i] != 'table-question-nomatch' and schema_q[j][i] != 'column-question-nomatch':
+            rel = schema_q[j][i]
+            if not rel.endswith("-nomatch") and not rel.endswith("-generic"):
                 edge_index.append([q_num + j, i])
 
     # 3. Syntax tree edges (dependency resolution thingy)
