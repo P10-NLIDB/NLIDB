@@ -7,13 +7,13 @@ from torch_geometric.data import Data, DataLoader
 from .process_dataset import generate_preprocessed_relational_data
 
 
-def build_pyg_graph(entry, db, turn='train', use_syntax=False):
+def build_pyg_graph(entry, db, mode='train', use_syntax=False):
     """
     Build a PyG graph from a single question+schema entry.
     
     :param entry: dict from preprocessing pipeline (includes schema_linking)
     :param db: dict from schema processing (includes relations)
-    :param turn: key for schema_linking (e.g., 'train', 'dev', 'test')
+    :param mode: key for schema_linking (e.g., 'train', 'dev', 'test')
     :param use_syntax: include dependency-based syntax edges (optional)
     :return: torch_geometric.data.Data
     """
