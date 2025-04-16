@@ -188,12 +188,12 @@ def preprocess_natural_language_question( entry: dict, dataset_name: str, data_i
     return entry
 
 
-def schema_linking(entry: dict, db: dict, turn: str):
+def schema_linking(entry: dict, db: dict):
         """ Perform schema linking: both question and database need to be preprocessed """
         # Todo: Change the db_dir to actual db location once dataset is in.
         db_dir = "data/database"
         db_content = True
-        raw_question_toks, question_toks = entry[f'raw_question_toks_{turn}'], entry[f'processed_question_toks_{turn}']
+        raw_question_toks, question_toks = entry[f'raw_question_toks'], entry[f'processed_question_toks']
         table_toks, column_toks = db['processed_table_toks'], db['processed_column_toks']
         table_names, column_names = db['processed_table_names'], db['processed_column_names']
         q_num, t_num, c_num, dtype = len(question_toks), len(table_toks), len(column_toks), '<U100'
@@ -265,7 +265,7 @@ def schema_linking(entry: dict, db: dict, turn: str):
         col_q_mat[0] = '*-question-generic'
         q_schema = np.concatenate([q_tab_mat, q_col_mat], axis=1)
         schema_q = np.concatenate([tab_q_mat, col_q_mat], axis=0)
-        entry[f'schema_linking_{turn}'] = (q_schema.tolist(), schema_q.tolist())
+        entry[f'schema_linking'] = (q_schema.tolist(), schema_q.tolist())
         return entry
 
 
@@ -354,7 +354,7 @@ def get_dataset_file_paths(data_base_dir, dataset_name, mode):
 
 
 def generate_preprocessed_relational_data(data_base_dir, dataset_name, mode, used_coref = False, use_dependency=False):
-    """End to end handling of the preprocessing and relation generation."""
+    """End to end handling of the preprocessing and relation generation"""
     db_dir, table_data_path, table_out_path, dataset_path, dataset_output_path_base = get_dataset_file_paths(data_base_dir, dataset_name, mode)
     
     # loading database and dataset
@@ -377,5 +377,4 @@ def generate_preprocessed_relational_data(data_base_dir, dataset_name, mode, use
 
     dataset = process_dataset_entries(dataset, tables, dataset_name, mode, dataset_output_path_base, used_coref)
     print('Dataset preprocessing costs %.4fs .' % (time.time() - start_time))
-
-
+    return dataset, tables
