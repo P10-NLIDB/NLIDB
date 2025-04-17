@@ -1,6 +1,6 @@
 experiment:
   name: train_simple_model
-  overwrite: true
+  overwrite: false
   batch_size: 32
   mode: train
 

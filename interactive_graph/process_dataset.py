@@ -6,11 +6,12 @@ from tqdm import tqdm
 from itertools import combinations, product
 from nltk.corpus import stopwords
 from utils.safe_file import safe_json_load, safe_pickle_save, safe_pickle_load
+from stanza.pipeline.core import DownloadMethod
 
 from .tree import Tree
 from .constants import MAX_RELATIVE_DIST
 
-nlp_tokenize = stanza.Pipeline('en', processors='tokenize,mwt,pos,lemma,depparse', tokenize_pretokenized = False, use_gpu=True)#, use_gpu=False)
+nlp_tokenize = stanza.Pipeline('en', processors='tokenize,mwt,pos,lemma,depparse', tokenize_pretokenized = False, use_gpu=True, download_method=DownloadMethod.REUSE_RESOURCES)#, use_gpu=False)
 stopwords = stopwords.words("english")
 
 
@@ -349,7 +350,7 @@ def get_dataset_file_paths(data_base_dir, dataset_name, mode):
     return db_dir, table_data_path, table_out_path, dataset_path, dataset_output_path_base
 
 
-def generate_preprocessed_relational_data(data_base_dir, dataset_name, mode, used_coref = False, use_dependency=False):
+def generate_preprocessed_relational_data(data_base_dir, dataset_name, mode, used_coref=False, use_dependency=False, overwrite=False):
     """End to end handling of the preprocessing and relation generation"""
     db_dir, table_data_path, table_out_path, dataset_path, dataset_output_path_base = get_dataset_file_paths(data_base_dir, dataset_name, mode)
     
@@ -357,7 +358,7 @@ def generate_preprocessed_relational_data(data_base_dir, dataset_name, mode, use
     print(f"Mode: {mode}")
 
     # Load or preprocessed tables
-    if os.path.exists(table_out_path):
+    if os.path.exists(table_out_path) and not overwrite:
         print("Loading preprocessed tables from disk...")
         tables = safe_pickle_load(table_out_path)
     else:
@@ -365,11 +366,11 @@ def generate_preprocessed_relational_data(data_base_dir, dataset_name, mode, use
         tables_list = safe_json_load(table_data_path)
         start_time = time.time()
         tables = process_all_databases(tables_list)
-        print('Databases preprocessing costs %.4fs .' % (time.time() - start_time))
+        print('Databases preprocessing costs %.4fs.' % (time.time() - start_time))
         safe_pickle_save(tables, table_out_path)
 
     # Load or preprocess dataset
-    if os.path.exists(os.path.join(dataset_output_path_base, f"{mode}.pkl")):
+    if os.path.exists(os.path.join(dataset_output_path_base, f"{mode}.pkl")) and not overwrite:
         print("Loading preprocessed dataset from disk...")
         dataset = safe_pickle_load(os.path.join(dataset_output_path_base, f"{mode}.pkl"))
     else:
@@ -377,6 +378,6 @@ def generate_preprocessed_relational_data(data_base_dir, dataset_name, mode, use
         raw_dataset = safe_json_load(dataset_path)
         start_time = time.time()
         dataset = process_dataset_entries(raw_dataset, tables, dataset_name, mode, dataset_output_path_base, used_coref)
-        print('Dataset preprocessing costs %.4fs .' % (time.time() - start_time))
+        print('Dataset preprocessing costs %.4fs.' % (time.time() - start_time))
 
     return dataset, tables
