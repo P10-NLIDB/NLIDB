@@ -1,8 +1,9 @@
-import fcntl
 import os
 import pickle
 import torch
-from torch_geometric.data import Data, DataLoader
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
+from utils.safe_file import safe_pickle_load, safe_pickle_save
 
 from .process_dataset import generate_preprocessed_relational_data
 
@@ -115,18 +116,13 @@ def load_or_build_graphs(
 
     if os.path.exists(graph_file_path) and not overwrite:
         print(f"Loading graphs from {graph_file_path}...")
-        with open(graph_file_path, "rb") as f:
-            graph_dataset = pickle.load(f)
+        graph_dataset = safe_pickle_load(graph_file_path)
 
         dataset_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}.bin")
         tables_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "tables.bin")
 
-        with open(dataset_file_path, "rb") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            dataset = pickle.load(f)
-        with open(tables_file_path, "rb") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            tables = pickle.load(f)
+        dataset = safe_pickle_load(dataset_file_path)
+        tables = safe_pickle_load(tables_file_path)
     else:
         print("Preprocessing graphs from scratch...")
         dataset, tables = generate_preprocessed_relational_data(
@@ -138,10 +134,9 @@ def load_or_build_graphs(
         if build_fn is None:
             raise ValueError("Must provide build_fn function to build graphs.")
 
-        graph_dataset = [build_fn(entry, tables[entry["db_id"]], turn=mode) for entry in dataset]
+        graph_dataset = [build_fn(entry, tables[entry["db_id"]], mode=mode) for entry in dataset]
 
-        with open(graph_file_path, "wb") as f:
-            pickle.dump(graph_dataset, f)
+        safe_pickle_save(graph_dataset, graph_file_path)
         print(f"Saved {len(graph_dataset)} graphs to {graph_file_path}")
 
     loader = DataLoader(graph_dataset, batch_size=batch_size, shuffle=True)

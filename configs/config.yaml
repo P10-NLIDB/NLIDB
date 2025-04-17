@@ -1,12 +1,13 @@
 experiment:
-  name: gnn_spider
-  overwrite: false
+  name: train_simple_model
+  overwrite: true
   batch_size: 32
   mode: train
 
 data:
-  base_dir: /path/to/spider
-  dataset_name: spider
+  base_dir: data
+  spider_dataset_name: spider
+  ambiqt_dataset_name: ambiQT
 
 preprocessing:
   used_coref: false
