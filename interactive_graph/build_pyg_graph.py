@@ -1,13 +1,14 @@
-import fcntl
 import os
 import pickle
 import torch
-from torch_geometric.data import Data, DataLoader
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
+from utils.safe_file import safe_pickle_load, safe_pickle_save
 
 from .process_dataset import generate_preprocessed_relational_data
 
 
-def build_pyg_graph(entry, db, mode='train', use_syntax=False):
+def build_pyg_graph(entry, db, mode='train', use_syntax=False, label=False):
     """
     Build a PyG graph from a single question+schema entry.
     
@@ -71,7 +72,9 @@ def build_pyg_graph(entry, db, mode='train', use_syntax=False):
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()  # [2, num_edges]
 
     # ---- LABEL ---- 1 if is_ambigous is found else set to 0
-    y = torch.tensor([entry.get("is_ambiguous", 0)], dtype=torch.float)
+    y = torch.tensor([1] if label else [0], dtype=torch.float)
+    # TODO: surely Martin will fix the dataset so every entry has this attribute:
+    #y = torch.tensor([entry.get("is_ambiguous", 0)], dtype=torch.float)
 
     return Data(x=x, edge_index=edge_index, y=y)
 
@@ -115,33 +118,29 @@ def load_or_build_graphs(
 
     if os.path.exists(graph_file_path) and not overwrite:
         print(f"Loading graphs from {graph_file_path}...")
-        with open(graph_file_path, "rb") as f:
-            graph_dataset = pickle.load(f)
+        graph_dataset = safe_pickle_load(graph_file_path)
 
-        dataset_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}.bin")
-        tables_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "tables.bin")
+        dataset_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}.pkl")
+        tables_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "tables.pkl")
 
-        with open(dataset_file_path, "rb") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            dataset = pickle.load(f)
-        with open(tables_file_path, "rb") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            tables = pickle.load(f)
+        dataset = safe_pickle_load(dataset_file_path)
+        tables = safe_pickle_load(tables_file_path)
     else:
         print("Preprocessing graphs from scratch...")
         dataset, tables = generate_preprocessed_relational_data(
             data_base_dir, dataset_name, mode,
-            used_coref=used_coref,
-            use_dependency=use_dependency
+            used_coref,
+            use_dependency,
+            overwrite
         )
 
         if build_fn is None:
             raise ValueError("Must provide build_fn function to build graphs.")
+    
+        true_or_negative_label = True if dataset_name =="ambiQT" else False
+        graph_dataset = [build_fn(entry, tables[entry["db_id"]], mode=mode, label=true_or_negative_label ) for entry in dataset]
 
-        graph_dataset = [build_fn(entry, tables[entry["db_id"]], turn=mode) for entry in dataset]
-
-        with open(graph_file_path, "wb") as f:
-            pickle.dump(graph_dataset, f)
+        safe_pickle_save(graph_dataset, graph_file_path)
         print(f"Saved {len(graph_dataset)} graphs to {graph_file_path}")
 
     loader = DataLoader(graph_dataset, batch_size=batch_size, shuffle=True)

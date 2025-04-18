@@ -1,16 +1,17 @@
 import sqlite3
 import os, json, pickle, time
-import fcntl
 import numpy as np
 import stanza
 from tqdm import tqdm
 from itertools import combinations, product
 from nltk.corpus import stopwords
+from utils.safe_file import safe_json_load, safe_pickle_save, safe_pickle_load
+from stanza.pipeline.core import DownloadMethod
 
 from .tree import Tree
 from .constants import MAX_RELATIVE_DIST
 
-nlp_tokenize = stanza.Pipeline('en', processors='tokenize,mwt,pos,lemma,depparse', tokenize_pretokenized = False, use_gpu=True)#, use_gpu=False)
+nlp_tokenize = stanza.Pipeline('en', processors='tokenize,mwt,pos,lemma,depparse', tokenize_pretokenized = False, use_gpu=True, download_method=DownloadMethod.REUSE_RESOURCES)#, use_gpu=False)
 stopwords = stopwords.words("english")
 
 
@@ -165,8 +166,8 @@ def preprocess_natural_language_question( entry: dict, dataset_name: str, data_i
     entry[f'ori_toks'] = [w.text for s in doc.sentences for w in s.words]
     entry[f'processed_question_toks'] = toks
     # print(question, [w.text for s in doc.sentences for w in s.words])
-    entry["final_preprocessed_text_list"].append([w.text for s in doc.sentences for w in s.words], len([w.text for s in doc.sentences for w in s.words]))
-
+    # TOOD: Pretty sure this is just used for coref, but for now we will keep it but just use 0 instead of turn
+    entry["final_preprocessed_text_list"].append([0, [w.text for s in doc.sentences for w in s.words], len([w.text for s in doc.sentences for w in s.words])])
     # relations in questions, q_num * q_num
     q_num, dtype = len(toks), '<U100'
     if q_num <= MAX_RELATIVE_DIST + 1:
@@ -190,8 +191,8 @@ def preprocess_natural_language_question( entry: dict, dataset_name: str, data_i
 
 def schema_linking(entry: dict, db: dict):
         """ Perform schema linking: both question and database need to be preprocessed """
-        # Todo: Change the db_dir to actual db location once dataset is in.
-        db_dir = "data/database"
+        # Todo: Change the db_dir to actual db location once dataset is in. Kind of curesd that it is hard coded here
+        db_dir = "data/original_dataset/spider/database"
         db_content = True
         raw_question_toks, question_toks = entry[f'raw_question_toks'], entry[f'processed_question_toks']
         table_toks, column_toks = db['processed_table_toks'], db['processed_column_toks']
@@ -281,11 +282,9 @@ def process_all_databases(tables_list, output_path=None):
     tables = {}
     for idx, each in tqdm(enumerate(tables_list)):
         tables[each['db_id']] = normalize_and_build_schema_relations(each)
-    print('In total, process %d databases .' % (len(tables)))
+    print('In total, process %d databases.' % (len(tables)))
     if output_path is not None:
-        with open (output_path, 'wb') as dump_f:
-            fcntl.flock(dump_f.fileno(), fcntl.LOCK_EX)
-            pickle.dump(tables, dump_f)
+        safe_pickle_save(tables, output_path)
     return tables
 
 
@@ -298,7 +297,7 @@ def process_dataset_entries(dataset, tables, dataset_name, mode, output_path_bas
     for idx, entry in tqdm(enumerate(dataset)):
         # if idx > 100:
         #     continue
-        if dataset_name in ["spider"]:
+        if dataset_name in ["spider", "ambiQT"]:
             entry = run_preprocessing_pipeline_on_entry(entry, tables[entry['db_id']], dataset_name, idx)
         elif dataset_name in ["cosql", "sparc"]:
             entry = run_preprocessing_pipeline_on_entry(entry, tables[entry['database_id']], dataset_name, idx)
@@ -307,9 +306,7 @@ def process_dataset_entries(dataset, tables, dataset_name, mode, output_path_bas
         if used_coref and not os.path.exists(os.path.join(output_path_base, f"{mode}_coref.json")):
             wfile.write(str(entry['final_preprocessed_text_list'])+"\n")
         processed_dataset.append(entry)
-    with open(os.path.join(output_path_base, f"{mode}.bin"), 'wb') as dump_f:
-        fcntl.flock(dump_f.fileno(), fcntl.LOCK_EX)
-        pickle.dump(processed_dataset, dump_f)
+    safe_pickle_save(processed_dataset, os.path.join(output_path_base, f"{mode}.pkl"))
     return processed_dataset
 
 
@@ -318,7 +315,7 @@ def get_dataset_file_paths(data_base_dir, dataset_name, mode):
 
     db_dir = os.path.join(data_base_dir, "original_dataset", dataset_name, "database")
     table_data_path=os.path.join(data_base_dir, "original_dataset", dataset_name, "tables.json")
-    table_out_path=os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "tables.bin")
+    table_out_path=os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "tables.pkl")
     if mode == "train":
         if dataset_name == "spider":
             dataset_path = os.path.join(data_base_dir, "original_dataset", dataset_name, "train_spider.json")
@@ -330,10 +327,10 @@ def get_dataset_file_paths(data_base_dir, dataset_name, mode):
         elif dataset_name == "sparc":
             dataset_path = os.path.join(data_base_dir, "original_dataset", dataset_name, "train.json")
         elif dataset_name == "ambiQT":
-            dataset_path = os.path.join(data_base_dir, "")
+            dataset_path = os.path.join(data_base_dir, "original_dataset", dataset_name, "ambiqt_data.json") # TODO: change to train later
         else:
             raise NotImplementedError
-        # dataset_output_path_base=os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "train.bin")
+        # dataset_output_path_base=os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "train.pkl")
     elif mode == "dev": 
         if dataset_name in ["spider", "sparc"] :
             dataset_path=os.path.join(data_base_dir, "original_dataset", dataset_name, "dev.json")
@@ -344,7 +341,7 @@ def get_dataset_file_paths(data_base_dir, dataset_name, mode):
             
         else:
             raise NotImplementedError
-        # dataset_output_path=os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "dev.bin")
+        # dataset_output_path=os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "dev.pkl")
     else:
         raise NotImplementedError
     dataset_output_path_base=os.path.join(data_base_dir, "preprocessed_dataset", dataset_name)
@@ -353,28 +350,34 @@ def get_dataset_file_paths(data_base_dir, dataset_name, mode):
     return db_dir, table_data_path, table_out_path, dataset_path, dataset_output_path_base
 
 
-def generate_preprocessed_relational_data(data_base_dir, dataset_name, mode, used_coref = False, use_dependency=False):
+def generate_preprocessed_relational_data(data_base_dir, dataset_name, mode, used_coref=False, use_dependency=False, overwrite=False):
     """End to end handling of the preprocessing and relation generation"""
     db_dir, table_data_path, table_out_path, dataset_path, dataset_output_path_base = get_dataset_file_paths(data_base_dir, dataset_name, mode)
     
-    # loading database and dataset
     print(f"Dataset name: {dataset_name}")
     print(f"Mode: {mode}")
-    with open(table_data_path, 'r') as load_f: 
-        fcntl.flock(load_f.fileno(), fcntl.LOCK_EX)
-        tables_list = json.load(load_f)
-    print('Firstly, preprocess the original databases ...')
-    # tables_list = align_tables_by_dataset_name(dataset_name, tables_list) # Probably not needed for our purposes
-    # print('Tables alignments done...')
-    start_time = time.time()
-    tables = process_all_databases(tables_list, table_out_path)
-    print('Databases preprocessing costs %.4fs .' % (time.time() - start_time))
 
-    with open(dataset_path, 'r') as load_f: 
-        fcntl.flock(load_f.fileno(), fcntl.LOCK_EX)
-        dataset = json.load(load_f)
-    start_time = time.time()
+    # Load or preprocessed tables
+    if os.path.exists(table_out_path) and not overwrite:
+        print("Loading preprocessed tables from disk...")
+        tables = safe_pickle_load(table_out_path)
+    else:
+        print("Preprocessing database schemas...")
+        tables_list = safe_json_load(table_data_path)
+        start_time = time.time()
+        tables = process_all_databases(tables_list)
+        print('Databases preprocessing costs %.4fs.' % (time.time() - start_time))
+        safe_pickle_save(tables, table_out_path)
 
-    dataset = process_dataset_entries(dataset, tables, dataset_name, mode, dataset_output_path_base, used_coref)
-    print('Dataset preprocessing costs %.4fs .' % (time.time() - start_time))
+    # Load or preprocess dataset
+    if os.path.exists(os.path.join(dataset_output_path_base, f"{mode}.pkl")) and not overwrite:
+        print("Loading preprocessed dataset from disk...")
+        dataset = safe_pickle_load(os.path.join(dataset_output_path_base, f"{mode}.pkl"))
+    else:
+        print("Preprocessing dataset entries...")
+        raw_dataset = safe_json_load(dataset_path)
+        start_time = time.time()
+        dataset = process_dataset_entries(raw_dataset, tables, dataset_name, mode, dataset_output_path_base, used_coref)
+        print('Dataset preprocessing costs %.4fs.' % (time.time() - start_time))
+
     return dataset, tables
