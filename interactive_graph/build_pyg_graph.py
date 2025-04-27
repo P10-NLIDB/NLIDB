@@ -46,6 +46,7 @@ def load_linker_model(linker_model_path="./linker_out/"):
     linker_model.eval()
     return linker_model, linker_tokenizer, device
 
+
 def load_bert_encoder():
     bert_model = BertModel.from_pretrained("bert-base-uncased")
     bert_tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
@@ -53,6 +54,42 @@ def load_bert_encoder():
     bert_model.to(device)
     bert_model.eval()
     return bert_model, bert_tokenizer, device
+
+
+@torch.no_grad()
+def batch_predict_relevance(question: str, schema_elements, linker_model, linker_tokenizer, device, threshold=0.5):
+    inputs = linker_tokenizer(
+        [question] * len(schema_elements),
+        schema_elements,
+        truncation=True,
+        padding=True,
+        max_length=64,
+        return_tensors='pt'
+    ).to(device)
+
+    logits = linker_model(**inputs).logits.squeeze(-1)  # (batch_size,)
+    probs = torch.sigmoid(logits)
+    relevance_flags = (probs >= threshold).tolist()  # List of True/False
+    return relevance_flags
+
+@torch.no_grad()
+def batch_build_embeddings(question: str, schema_elements, relevance_flags, bert_model, bert_tokenizer, device):
+    input_texts = [
+        f"[CLS] {question} [SEP] {schema_element} [SEP] {'relevant' if is_relevant else 'irrelevant'} [SEP]"
+        for schema_element, is_relevant in zip(schema_elements, relevance_flags)
+    ]
+
+    inputs = bert_tokenizer(
+        input_texts,
+        truncation=True,
+        padding=True,
+        max_length=128,
+        return_tensors='pt'
+    ).to(device)
+
+    outputs = bert_model(**inputs)
+    cls_embeddings = outputs.last_hidden_state[:, 0, :]  # [batch_size, hidden_dim]
+    return cls_embeddings  # (batch_size, hidden_dim)
 
 
 @torch.no_grad()
@@ -72,37 +109,14 @@ def build_pyg_graph(
     question = " ".join(entry['processed_question_toks'])  # Preprocessed question
     schema_elements = db['processed_table_names'] + db['processed_column_names']
 
-    # --- Predict relevance for all schema elements ---
-    batch_size = len(schema_elements)
-    linker_inputs = linker_tokenizer(
-        [question] * batch_size,
-        schema_elements,
-        truncation=True,
-        padding=True,
-        max_length=64,
-        return_tensors='pt'
-    ).to(linker_device)
+    # --- Predict relevance and build embeddings ---
+    relevance_flags = batch_predict_relevance(
+        question, schema_elements, linker_model, linker_tokenizer, linker_device
+    )
 
-    linker_logits = linker_model(**linker_inputs).logits.squeeze(-1)  # (batch_size,)
-    relevance_probs = torch.sigmoid(linker_logits)
-    relevance_flags = (relevance_probs >= 0.5).tolist()  # List[bool]
-
-    # --- Build BERT embeddings ---
-    input_texts = [
-        f"[CLS] {question} [SEP] {schema_element} [SEP] {'relevant' if is_relevant else 'irrelevant'} [SEP]"
-        for schema_element, is_relevant in zip(schema_elements, relevance_flags)
-    ]
-
-    bert_inputs = bert_tokenizer(
-        input_texts,
-        truncation=True,
-        padding=True,
-        max_length=128,
-        return_tensors='pt'
-    ).to(bert_device)
-
-    bert_outputs = bert_model(**bert_inputs)
-    cls_embeddings = bert_outputs.last_hidden_state[:, 0, :]  # (batch_size, hidden_dim)
+    cls_embeddings = batch_build_embeddings(
+        question, schema_elements, relevance_flags, bert_model, bert_tokenizer, bert_device
+    )
 
     x = cls_embeddings  # [num_nodes, hidden_dim]
 
