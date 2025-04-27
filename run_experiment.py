@@ -47,7 +47,7 @@ def run_sweep(cfg: DictConfig):
         print(f"\n Trying config: hidden_dim={hidden_dim}, layers={num_layers}, lr={lr}, epochs={epochs}")
         loader = DataLoader(combined_dataset, batch_size=cfg.experiment.batch_size, shuffle=True)
         
-        model = GNNClassifier(in_dim=3, hidden_dim=hidden_dim, num_layers=num_layers).to(device)
+        model = GNNClassifier(in_dim=768, hidden_dim=hidden_dim, num_layers=num_layers).to(device)
 
         train(model, loader, epochs=epochs, lr=lr)
         acc = evaluate(model, loader)
