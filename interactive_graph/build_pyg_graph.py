@@ -180,7 +180,24 @@ def load_or_build_graphs(
     overwrite=False,
 ):
     """
-    Loads or builds PyG graphs with node alignment guaranteed via node_to_idx dictionary.
+    Loads preprocessed graphs for a specified dataset from disk, or generates them from scratch 
+    if they do not exist or if overwrite is True. It returns a DataLoader suitable for training
+    Graph Neural Networks (GNNs), along with the individual graphs, preprocessed dataset entries, 
+    and schema information.
+    Args:
+        data_base_dir (str): Base directory path containing raw and processed data.
+        dataset_name (str): Name of the dataset (e.g., 'spider', 'cosql', 'ambiQT').
+        mode (str, optional): Mode of the dataset ('train', 'dev', or 'test'). Defaults to "train".
+        used_coref (bool, optional): Whether coreference resolution preprocessing is applied. Defaults to False.
+        use_dependency (bool, optional): Whether dependency parsing information is included. Defaults to False.
+        batch_size (int, optional): Batch size for the PyTorch Geometric DataLoader. Defaults to 32.
+        overwrite (bool, optional): If True, forces regeneration of graphs even if cached versions exist. Defaults to False.
+    Returns:
+        tuple:
+            - loader (DataLoader): PyTorch Geometric DataLoader containing graph batches for training.
+            - graph_dataset (list[Data]): List of PyG graph objects for individual dataset entries.
+            - dataset (list[dict]): Preprocessed dataset entries containing questions and annotations.
+            - tables (dict): Processed database schema information.
     """
     graph_file_path = os.path.join(
         data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}_graphs.pkl"
