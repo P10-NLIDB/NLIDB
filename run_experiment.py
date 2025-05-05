@@ -38,7 +38,6 @@ def run_sweep(cfg: DictConfig):
         overwrite=cfg.experiment.overwrite,
         used_coref=cfg.preprocessing.used_coref,
         use_dependency=cfg.preprocessing.use_dependency,
-        build_fn=build_pyg_graph
     )
 
     combined_dataset = graph_dataset_spider + graph_dataset_ambiQT
