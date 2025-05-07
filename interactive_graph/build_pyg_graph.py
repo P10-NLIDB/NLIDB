@@ -99,48 +99,47 @@ def batch_build_embeddings(question: str, schema_elements, relevance_flags, bert
 
 def get_schema_node_map(db):
     """
-    Creates an ordered mapping of schema elements to indices.
-    Returns:
-        node_to_idx: dict mapping schema node (str) -> index (int)
-        idx_to_node: list of node names in index order
+    Returns
+        node_to_idx : dict  (schema node -> unique index)
+        idx_to_node : list  (unique nodes in stable order)
     """
     schema_nodes = db['processed_table_names'] + db['processed_column_names']
-    node_to_idx = {name: idx for idx, name in enumerate(schema_nodes)}
-    return node_to_idx, schema_nodes
 
+    node_to_idx = {}
+    idx_to_node = []
+    for name in schema_nodes:
+        if name not in node_to_idx:
+            node_to_idx[name] = len(idx_to_node)
+            idx_to_node.append(name)
+
+    return node_to_idx, idx_to_node
 
 
 @torch.no_grad()
 def create_graph_from_schema(db, entry):
-    node_to_idx, idx_to_node = get_schema_node_map(db)
-    num_nodes = len(idx_to_node)
+    raw_nodes = db['processed_table_names'] + db['processed_column_names']
 
-    edge_index = [
-        [i, j]
-        for i, row in enumerate(db['relations'])
-        for j, rel in enumerate(row)
-        if rel not in ('none', '', None) and not str(rel).endswith('-generic')
-    ]
-    schema_rel = db['relations']
+    node_to_idx, unique_nodes = get_schema_node_map(db)
 
-    #for i in range(len(schema_rel)):
-    #    for j in range(len(schema_rel[0])):
-    #        rel = schema_rel[i][j]
-    #        if rel != 'none' and rel != '' and not rel.endswith("-generic"):
-    #            edge_index.append([i, j])
+    edges = []
+    for i, row in enumerate(db['relations']):
+        for j, rel in enumerate(row):
+            if rel not in ('none', '', None) and not str(rel).endswith('-generic'):
+                ui = node_to_idx[raw_nodes[i]]
+                uj = node_to_idx[raw_nodes[j]]
+                edges.extend(([ui, uj], [uj, ui]))
 
-    edge_index += [[j, i] for i, j in edge_index]
-    edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-    
-    if edge_index.max() >= num_nodes:
-        raise ValueError(
-            f"Edge index {edge_index.max()} exceeds num_nodes={num_nodes} (ghost nodes)"
-        )
-    
-    x = torch.zeros((num_nodes, 768))
+    edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
 
+    # ── sanity (should never fail now)
+    if edge_index.numel() and edge_index.max() >= len(unique_nodes):
+        raise RuntimeError("ghost node still present – mapping bug")
+
+    x = torch.zeros((len(unique_nodes), 1))          # placeholder
     y = torch.tensor([float(entry.get('is_ambiguous', 0.0))])
-    return Data(x=x, edge_index=edge_index, y=y)
+
+    return Data(x=x, edge_index=edge_index, y=y), node_to_idx, unique_nodes
+
 
 def clean_graph(g: Data):
     for attr in ('node_to_idx', 'idx_to_node'):
@@ -269,12 +268,13 @@ def load_or_build_graphs(
             fp = graph_file_path.split(".")
             db = tables[entry["db_id"]]
 
-            graph = create_graph_from_schema(db, entry)
+            graph, node_to_idx, idx_to_node = create_graph_from_schema(
+                db, entry)
             node_embeddings = generate_node_embeddings(
                 entry, db,
-                graph.node_to_idx,
+                node_to_idx,
                 linker_model, linker_tokenizer, linker_device,
-                bert_model, bert_tokenizer, bert_device, graph.idx_to_node,
+                bert_model, bert_tokenizer, bert_device, idx_to_node,
                 validate_alignment=True,
             )
             graph.x = node_embeddings
