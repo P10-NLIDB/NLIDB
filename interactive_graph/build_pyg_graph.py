@@ -283,7 +283,7 @@ def load_or_build_graphs(
             if (i % 1000 == 0 and i != 0 or i == len(dataset) - 1):
                 if i == len(dataset) - 1:
                     safe_pickle_save(
-                        graph_dataset[i-(len(dataset) - entry_num * 1000): i], (fp[0] + f"_{entry_num}.json"))
+                        graph_dataset[i-(len(dataset) - entry_num * 1000): i], (fp[0] + f"_{entry_num}.pkl"))
                 else:
                     safe_pickle_save(
                         graph_dataset[i-1000: i], (fp[0] + f"_{entry_num}.pkl"))
