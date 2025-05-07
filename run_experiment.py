@@ -3,8 +3,9 @@ import torch
 from itertools import product
 from omegaconf import DictConfig
 from torch_geometric.loader import DataLoader
-from interactive_graph.build_pyg_graph import load_or_build_graphs, build_pyg_graph
+from interactive_graph.build_pyg_graph import load_or_build_graphs, create_graph_from_schema
 from models.gnn_classifier import GNNClassifier, evaluate, train
+
 
 def run_sweep(cfg: DictConfig):
     # Hyperparameter grid
@@ -19,16 +20,15 @@ def run_sweep(cfg: DictConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load datasets once
-    loader_spider, graph_dataset_spider, _, _ = load_or_build_graphs(
-        data_base_dir=cfg.data.base_dir,
-        dataset_name=cfg.data.spider_dataset_name,
-        mode=cfg.experiment.mode,
-        batch_size=cfg.experiment.batch_size,
-        overwrite=cfg.experiment.overwrite,
-        used_coref=cfg.preprocessing.used_coref,
-        use_dependency=cfg.preprocessing.use_dependency,
-        build_fn=build_pyg_graph
-    )
+   # loader_spider, graph_dataset_spider, _, _ = load_or_build_graphs(
+   #     data_base_dir=cfg.data.base_dir,
+   #     dataset_name=cfg.data.spider_dataset_name,
+   #     mode=cfg.experiment.mode,
+   #     batch_size=cfg.experiment.batch_size,
+   #     overwrite=cfg.experiment.overwrite,
+   #     used_coref=cfg.preprocessing.used_coref,
+   #     use_dependency=cfg.preprocessing.use_dependency,
+   # )
 
     loader_ambiQT, graph_dataset_ambiQT, _, _ = load_or_build_graphs(
         data_base_dir=cfg.data.base_dir,
@@ -40,13 +40,16 @@ def run_sweep(cfg: DictConfig):
         use_dependency=cfg.preprocessing.use_dependency,
     )
 
-    combined_dataset = graph_dataset_spider + graph_dataset_ambiQT
+    combined_dataset = graph_dataset_ambiQT
 
     for hidden_dim, num_layers, lr, epochs in product(hidden_dims, num_layers_list, lrs, epoch_list):
-        print(f"\n Trying config: hidden_dim={hidden_dim}, layers={num_layers}, lr={lr}, epochs={epochs}")
-        loader = DataLoader(combined_dataset, batch_size=cfg.experiment.batch_size, shuffle=True)
-        
-        model = GNNClassifier(in_dim=768, hidden_dim=hidden_dim, num_layers=num_layers).to(device)
+        print(
+            f"\n Trying config: hidden_dim={hidden_dim}, layers={num_layers}, lr={lr}, epochs={epochs}")
+        loader = DataLoader(
+            combined_dataset, batch_size=cfg.experiment.batch_size, shuffle=True)
+
+        model = GNNClassifier(in_dim=768, hidden_dim=hidden_dim,
+                              num_layers=num_layers).to(device)
 
         train(model, loader, epochs=epochs, lr=lr)
         acc = evaluate(model, loader)
@@ -69,6 +72,7 @@ def run_sweep(cfg: DictConfig):
 def main(cfg: DictConfig):
     print(f"Starting experiment sweep: {cfg.experiment.name}")
     run_sweep(cfg)
+
 
 if __name__ == "__main__":
     main()

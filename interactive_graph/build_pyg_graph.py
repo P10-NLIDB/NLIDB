@@ -2,7 +2,7 @@ import os
 import torch
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-import tqdm
+from tqdm import tqdm
 from transformers import BertTokenizerFast, BertModel, BertForSequenceClassification
 from utils.safe_file import safe_pickle_load, safe_pickle_save
 from .process_dataset import generate_preprocessed_relational_data
@@ -39,8 +39,10 @@ As a reminder, this is the data-flow
 +---------------------------------------+
 """
 
+
 def load_linker_model(linker_model_path="./linker_out/"):
-    linker_model = BertForSequenceClassification.from_pretrained(linker_model_path)
+    linker_model = BertForSequenceClassification.from_pretrained(
+        linker_model_path)
     linker_tokenizer = BertTokenizerFast.from_pretrained(linker_model_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     linker_model.to(device)
@@ -73,6 +75,7 @@ def batch_predict_relevance(question: str, schema_elements, linker_model, linker
     relevance_flags = (probs >= threshold).tolist()  # List of True/False
     return relevance_flags
 
+
 @torch.no_grad()
 def batch_build_embeddings(question: str, schema_elements, relevance_flags, bert_model, bert_tokenizer, device):
     input_texts = [
@@ -89,8 +92,10 @@ def batch_build_embeddings(question: str, schema_elements, relevance_flags, bert
     ).to(device)
 
     outputs = bert_model(**inputs)
-    cls_embeddings = outputs.last_hidden_state[:, 0, :]  # [batch_size, hidden_dim]
+    # [batch_size, hidden_dim]
+    cls_embeddings = outputs.last_hidden_state[:, 0, :]
     return cls_embeddings  # (batch_size, hidden_dim)
+
 
 def get_schema_node_map(db):
     """
@@ -99,7 +104,12 @@ def get_schema_node_map(db):
         node_to_idx: dict mapping schema node (str) -> index (int)
         idx_to_node: list of node names in index order
     """
-    schema_nodes = db['processed_table_names'] + db['processed_column_names']
+    schema_nodes = []
+    seen = set()
+    for name in db['processed_table_names'] + db['processed_column_names']:
+        if name not in seen:
+            seen.add(name)
+            schema_nodes.append(name)
     node_to_idx = {name: idx for idx, name in enumerate(schema_nodes)}
     return node_to_idx, schema_nodes
 
@@ -121,13 +131,14 @@ def create_graph_from_schema(db, entry):
     edge_index += [[j, i] for i, j in edge_index]
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
 
-    x = torch.zeros((num_nodes, 1))  # dummy features, will be changed to the embedding
-    
+    # dummy features, will be changed to the embedding
+    x = torch.zeros((num_nodes, 1))
+
     is_ambiguous = bool(entry.get("is_ambiguous", False))
     y = torch.tensor([1.0 if is_ambiguous else 0.0], dtype=torch.float)
 
     data = Data(x=x, edge_index=edge_index, y=y)
-    data.node_to_idx = node_to_idx 
+    data.node_to_idx = node_to_idx
     data.idx_to_node = idx_to_node  # reverse map
 
     return data
@@ -144,11 +155,14 @@ def generate_node_embeddings(
     bert_model,
     bert_tokenizer,
     bert_device,
+    idx_to_node,
     validate_alignment=True,
 ):
     question = " ".join(entry['processed_question_toks'])
-    schema_nodes = list(node_to_idx.keys())  # ordered list of schema node names, should assure schema-node-embedding alignment
-
+    # ordered list of schema node names, should assure schema-node-embedding alignment
+    # schema_nodes = list(node_to_idx.keys())
+    schema_nodes = idx_to_node
+    print(idx_to_node)
     relevance_flags = batch_predict_relevance(
         question, schema_nodes, linker_model, linker_tokenizer, linker_device
     )
@@ -180,9 +194,9 @@ def load_or_build_graphs(
     overwrite=False,
 ):
     """
-    Loads preprocessed graphs for a specified dataset from disk, or generates them from scratch 
+    Loads preprocessed graphs for a specified dataset from disk, or generates them from scratch
     if they do not exist or if overwrite is True. It returns a DataLoader suitable for training
-    Graph Neural Networks (GNNs), along with the individual graphs, preprocessed dataset entries, 
+    Graph Neural Networks (GNNs), along with the individual graphs, preprocessed dataset entries,
     and schema information.
     Args:
         data_base_dir (str): Base directory path containing raw and processed data.
@@ -203,12 +217,30 @@ def load_or_build_graphs(
         data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}_graphs.pkl"
     )
 
-    if os.path.exists(graph_file_path) and not overwrite:
-        print(f"Loading graphs from {graph_file_path}...")
-        graph_dataset = safe_pickle_load(graph_file_path)
+    def load_dataset(graph_file_path: str, graph: list, x: int = 0) -> list:
+        try:
+            base, ext = os.path.splitext(graph_file_path)
+            current_path = f"{base}_{x}{ext}"
+            print(current_path)
 
-        dataset_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}.pkl")
-        tables_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "tables.pkl")
+            current_graph = safe_pickle_load(current_path)
+
+            if current_graph:
+                graph.extend(current_graph)
+                return load_dataset(graph_file_path, graph, x + 1)
+            else:
+                return graph
+        except FileNotFoundError:
+            return graph
+
+    if os.path.exists(f"{graph_file_path.split('.')[0] + '_0.pkl'}") and not overwrite:
+        print(f"Loading graphs from {graph_file_path}...")
+        graph_dataset = load_dataset(graph_file_path, [])
+
+        dataset_file_path = os.path.join(
+            data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}.pkl")
+        tables_file_path = os.path.join(
+            data_base_dir, "preprocessed_dataset", dataset_name, "tables.pkl")
 
         dataset = safe_pickle_load(dataset_file_path)
         tables = safe_pickle_load(tables_file_path)
@@ -224,9 +256,10 @@ def load_or_build_graphs(
 
         linker_model, linker_tokenizer, linker_device = load_linker_model()
         bert_model, bert_tokenizer, bert_device = load_bert_encoder()
-
+        entry_num = 0
         graph_dataset = []
-        for entry in tqdm(dataset, desc="Building graphs"):
+        for i, entry in enumerate(tqdm(dataset, desc="Building graphs")):
+            fp = graph_file_path.split(".")
             db = tables[entry["db_id"]]
 
             graph = create_graph_from_schema(db, entry)
@@ -234,14 +267,20 @@ def load_or_build_graphs(
                 entry, db,
                 graph.node_to_idx,
                 linker_model, linker_tokenizer, linker_device,
-                bert_model, bert_tokenizer, bert_device,
-                validate_alignment=True
+                bert_model, bert_tokenizer, bert_device, graph.idx_to_node,
+                validate_alignment=True,
             )
             graph.x = node_embeddings
             graph_dataset.append(graph)
+            if (i % 1000 == 0 and i != 0 or i == len(dataset) - 1):
+                if i == len(dataset) - 1:
+                    safe_pickle_save(
+                        graph_dataset[i-(len(dataset) - entry_num * 1000): i], (fp[0] + f"_{entry_num}.json"))
+                else:
+                    safe_pickle_save(
+                        graph_dataset[i-1000: i], (fp[0] + f"_{entry_num}.pkl"))
+                    entry_num += 1
 
-
-        safe_pickle_save(graph_dataset, graph_file_path)
         print(f"Saved {len(graph_dataset)} graphs to {graph_file_path}")
 
     loader = DataLoader(graph_dataset, batch_size=batch_size, shuffle=True)
