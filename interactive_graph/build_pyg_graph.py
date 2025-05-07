@@ -104,14 +104,10 @@ def get_schema_node_map(db):
         node_to_idx: dict mapping schema node (str) -> index (int)
         idx_to_node: list of node names in index order
     """
-    schema_nodes = []
-    seen = set()
-    for name in db['processed_table_names'] + db['processed_column_names']:
-        if name not in seen:
-            seen.add(name)
-            schema_nodes.append(name)
+    schema_nodes = db['processed_table_names'] + db['processed_column_names']
     node_to_idx = {name: idx for idx, name in enumerate(schema_nodes)}
     return node_to_idx, schema_nodes
+
 
 
 @torch.no_grad()
@@ -119,29 +115,40 @@ def create_graph_from_schema(db, entry):
     node_to_idx, idx_to_node = get_schema_node_map(db)
     num_nodes = len(idx_to_node)
 
-    edge_index = []
+    edge_index = [
+        [i, j]
+        for i, row in enumerate(db['relations'])
+        for j, rel in enumerate(row)
+        if rel not in ('none', '', None) and not str(rel).endswith('-generic')
+    ]
     schema_rel = db['relations']
 
-    for i in range(len(schema_rel)):
-        for j in range(len(schema_rel[0])):
-            rel = schema_rel[i][j]
-            if rel != 'none' and rel != '' and not rel.endswith("-generic"):
-                edge_index.append([i, j])
+    #for i in range(len(schema_rel)):
+    #    for j in range(len(schema_rel[0])):
+    #        rel = schema_rel[i][j]
+    #        if rel != 'none' and rel != '' and not rel.endswith("-generic"):
+    #            edge_index.append([i, j])
 
     edge_index += [[j, i] for i, j in edge_index]
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+    
+    if edge_index.max() >= num_nodes:
+        raise ValueError(
+            f"Edge index {edge_index.max()} exceeds num_nodes={num_nodes} (ghost nodes)"
+        )
+    
+    x = torch.zeros((num_nodes, 768))
 
-    # dummy features, will be changed to the embedding
-    x = torch.zeros((num_nodes, 1))
+    y = torch.tensor([float(entry.get('is_ambiguous', 0.0))])
+    return Data(x=x, edge_index=edge_index, y=y)
 
-    is_ambiguous = bool(entry.get("is_ambiguous", False))
-    y = torch.tensor([1.0 if is_ambiguous else 0.0], dtype=torch.float)
-
-    data = Data(x=x, edge_index=edge_index, y=y)
-    data.node_to_idx = node_to_idx
-    data.idx_to_node = idx_to_node  # reverse map
-
-    return data
+def clean_graph(g: Data):
+    for attr in ('node_to_idx', 'idx_to_node'):
+        if not hasattr(g, attr):
+            setattr(g, attr, {} if attr.endswith('_idx') else [])
+    if g.x.size(1) != 768:
+        raise ValueError(f"x has width {g.x.size(1)}; expected 768")
+    return g
 
 
 @torch.no_grad()
@@ -271,6 +278,7 @@ def load_or_build_graphs(
                 validate_alignment=True,
             )
             graph.x = node_embeddings
+            graph = clean_graph(graph)
             graph_dataset.append(graph)
             if (i % 1000 == 0 and i != 0 or i == len(dataset) - 1):
                 if i == len(dataset) - 1:
