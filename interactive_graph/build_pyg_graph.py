@@ -91,7 +91,7 @@ def batch_build_embeddings(question: str, schema_elements, relevance_flags, bert
         return_tensors='pt'
     ).to(device)
 
-    outputs = bert_model(**inputs)
+    outputs = bert_model.bert(**inputs)
     # [batch_size, hidden_dim]
     cls_embeddings = outputs.last_hidden_state[:, 0, :]
     return cls_embeddings  # (batch_size, hidden_dim)
@@ -198,6 +198,7 @@ def load_or_build_graphs(
     use_dependency=False,
     batch_size=32,
     overwrite=False,
+    test=False,
 ):
     """
     Loads preprocessed graphs for a specified dataset from disk, or generates them from scratch
@@ -219,9 +220,15 @@ def load_or_build_graphs(
             - dataset (list[dict]): Preprocessed dataset entries containing questions and annotations.
             - tables (dict): Processed database schema information.
     """
-    graph_file_path = os.path.join(
-        data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}_graphs.pkl"
-    )
+    graph_file_path = ""
+    if not test:
+        graph_file_path = os.path.join(
+            data_base_dir, "preprocessed_dataset", dataset_name, "train-data-fitted", f"{mode}_graphs.pkl"
+        )
+    else:
+        graph_file_path = os.path.join(
+            data_base_dir, "preprocessed_dataset", dataset_name, "test-data-fitted", f"{mode}_graphs.pkl"
+        )
 
     def load_dataset(graph_file_path: str, graph: list, x: int = 0) -> list:
         try:
@@ -274,7 +281,7 @@ def load_or_build_graphs(
                 entry, db,
                 node_to_idx,
                 linker_model, linker_tokenizer, linker_device,
-                bert_model, bert_tokenizer, bert_device, idx_to_node,
+                linker_model, linker_tokenizer, linker_device, idx_to_node,
                 validate_alignment=True,
             )
             graph.x = node_embeddings

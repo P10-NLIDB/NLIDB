@@ -12,3 +12,6 @@ data:
 preprocessing:
   used_coref: false
   use_dependency: false
+
+test:
+  do_run_test: false
