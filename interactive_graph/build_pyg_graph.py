@@ -1,4 +1,6 @@
+import gc
 import os
+from torch.utils.data import Dataset
 import torch
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
@@ -168,7 +170,6 @@ def generate_node_embeddings(
     # ordered list of schema node names, should assure schema-node-embedding alignment
     # schema_nodes = list(node_to_idx.keys())
     schema_nodes = idx_to_node
-    print(idx_to_node)
     relevance_flags = batch_predict_relevance(
         question, schema_nodes, linker_model, linker_tokenizer, linker_device
     )
@@ -188,6 +189,16 @@ def generate_node_embeddings(
                 )
 
     return cls_embeddings  # [num_nodes, hidden_dim]
+
+class ShardedGraphDataset(Dataset):
+    def __init__(self, index_path):
+        self.paths = torch.load(index_path)
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, idx):
+        return torch.load(self.paths[idx])
 
 
 def load_or_build_graphs(
@@ -220,46 +231,17 @@ def load_or_build_graphs(
             - dataset (list[dict]): Preprocessed dataset entries containing questions and annotations.
             - tables (dict): Processed database schema information.
     """
-    graph_file_path = ""
-    if not test:
-        graph_file_path = os.path.join(
-            data_base_dir, "preprocessed_dataset", dataset_name, "train-data-fitted", f"{mode}_graphs.pkl"
-        )
-    else:
-        graph_file_path = os.path.join(
-            data_base_dir, "preprocessed_dataset", dataset_name, "test-data-fitted", f"{mode}_graphs.pkl"
-        )
+    folder_name = "test-data-fitted" if test else "train-data-fitted"
+    graph_dir = os.path.join(
+        data_base_dir, "preprocessed_dataset", dataset_name, folder_name, f"{mode}_graphs"
+    )
+    index_path = os.path.join(graph_dir, "index.pt")
 
-    def load_dataset(graph_file_path: str, graph: list, x: int = 0) -> list:
-        try:
-            base, ext = os.path.splitext(graph_file_path)
-            current_path = f"{base}_{x}{ext}"
-            print(current_path)
+    dataset_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}.pkl")
+    tables_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "tables.pkl")
 
-            current_graph = safe_pickle_load(current_path)
-
-            if current_graph:
-                graph.extend(current_graph)
-                return load_dataset(graph_file_path, graph, x + 1)
-            else:
-                return graph
-        except FileNotFoundError:
-            return graph
-
-    if os.path.exists(f"{graph_file_path.split('.')[0] + '_0.pkl'}") and not overwrite:
-        print(f"Loading graphs from {graph_file_path}...")
-        graph_dataset = load_dataset(graph_file_path, [])
-
-        dataset_file_path = os.path.join(
-            data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}.pkl")
-        tables_file_path = os.path.join(
-            data_base_dir, "preprocessed_dataset", dataset_name, "tables.pkl")
-
-        dataset = safe_pickle_load(dataset_file_path)
-        tables = safe_pickle_load(tables_file_path)
-
-    else:
-        print("Preprocessing graphs from scratch...")
+    if not os.path.exists(index_path) or overwrite:
+        print("Building graphs from scratch...")
         dataset, tables = generate_preprocessed_relational_data(
             data_base_dir, dataset_name, mode,
             used_coref,
@@ -269,14 +251,14 @@ def load_or_build_graphs(
 
         linker_model, linker_tokenizer, linker_device = load_linker_model()
         bert_model, bert_tokenizer, bert_device = load_bert_encoder()
-        entry_num = 0
-        graph_dataset = []
-        for i, entry in enumerate(tqdm(dataset, desc="Building graphs")):
-            fp = graph_file_path.split(".")
-            db = tables[entry["db_id"]]
 
-            graph, node_to_idx, idx_to_node = create_graph_from_schema(
-                db, entry)
+        os.makedirs(graph_dir, exist_ok=True)
+        index_file = []
+
+        for i, entry in enumerate(tqdm(dataset, desc="Creating and saving graphs")):
+            db = tables[entry["db_id"]]
+            graph, node_to_idx, idx_to_node = create_graph_from_schema(db, entry)
+
             node_embeddings = generate_node_embeddings(
                 entry, db,
                 node_to_idx,
@@ -284,19 +266,22 @@ def load_or_build_graphs(
                 linker_model, linker_tokenizer, linker_device, idx_to_node,
                 validate_alignment=True,
             )
+
             graph.x = node_embeddings
             graph = clean_graph(graph)
-            graph_dataset.append(graph)
-            if (i % 1000 == 0 and i != 0 or i == len(dataset) - 1):
-                if i == len(dataset) - 1:
-                    safe_pickle_save(
-                        graph_dataset[i-(len(dataset) - entry_num * 1000): i], (fp[0] + f"_{entry_num}.pkl"))
-                else:
-                    safe_pickle_save(
-                        graph_dataset[i-1000: i], (fp[0] + f"_{entry_num}.pkl"))
-                    entry_num += 1
+            graph.example_index = i  # to link with dataset entry
 
-        print(f"Saved {len(graph_dataset)} graphs to {graph_file_path}")
+            graph_path = os.path.join(graph_dir, f"graph_{i}.pt")
+            torch.save(graph, graph_path)
+            index_file.append(graph_path)
+
+        torch.save(index_file, index_path)
+        print(f"Saved {len(index_file)} graphs to {graph_dir}")
+
+    graph_dataset = ShardedGraphDataset(index_path)
+
+    dataset = safe_pickle_load(dataset_file_path)
+    tables = safe_pickle_load(tables_file_path)
 
     loader = DataLoader(graph_dataset, batch_size=batch_size, shuffle=True)
     return loader, graph_dataset, dataset, tables

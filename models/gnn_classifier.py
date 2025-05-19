@@ -202,6 +202,5 @@ def evaluate(model, loader):
     recall = recall_score(all_labels, all_preds, pos_label=1)
     f1 = f1_score(all_labels, all_preds, pos_label=1)
 
-    print(
-        f"Accuracy: {acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1: {f1:.4f}")
+    print(f"Our model | Accuracy: {acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1: {f1:.4f}")
     return acc, precision, recall, f1
