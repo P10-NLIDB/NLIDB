@@ -67,11 +67,13 @@ def run_experiments(cfg: DictConfig, do_train: bool, out: str, test=False):
         model_acc, model_precision, model_recall, model_f1 = evaluate(model, eval_loader)
         safe_pickle_save(model, out)
 
-        ### End or our model, start of LLM eval ###
+        ### LLM ###
 
         client, deployment = get_client()
         evaluate_llm_on_graph_dataset(client, deployment, graph_dataset_ambiQT_val, val_dataset)
 
+        ### Intent-Sim ###
+        
 
 @hydra.main(config_path="configs", config_name="config", version_base="1.3")
 def main(cfg: DictConfig):
