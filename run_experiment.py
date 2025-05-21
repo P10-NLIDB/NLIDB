@@ -1,3 +1,4 @@
+import argparse
 import hydra
 import torch
 from itertools import product
@@ -8,7 +9,7 @@ from interactive_graph.build_pyg_graph import load_or_build_graphs, create_graph
 from models.gnn_classifier import GNNClassifier, evaluate, train
 from torch.utils.data import random_split
 from utils.safe_file import safe_pickle_load, safe_pickle_save
-
+from OpenSearchSQL.src.runner.run_manager import RunManager
 
 def run_experiments(cfg: DictConfig, do_train: bool, out: str, test=False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -72,7 +73,25 @@ def run_experiments(cfg: DictConfig, do_train: bool, out: str, test=False):
         client, deployment = get_client()
         evaluate_llm_on_graph_dataset(client, deployment, graph_dataset_ambiQT_val, val_dataset)
 
-        ### Intent-Sim ###
+        ### OpenSearch ###
+        ## TODO: Make sure to also get the dataset and get the same splits as from the graphs
+        args = argparse.Namespace(
+            data_mode="dev",
+            db_root_path="Bird",
+            pipeline_nodes="generate_db_schema+extract_col_value+extract_query_noun+column_retrieve_and_other_info+candidate_generate+align_correct+vote+evaluation",
+            pipeline_setup='{ "generate_db_schema": { "engine": "gpt-4.1", "bert_model": "all-MiniLM-L6-v2", "device":"cpu" }, "extract_col_value": { "engine": "gpt-4.1", "temperature":0.0 }, "extract_query_noun": { "engine": "gpt-4.1", "temperature":0.0 }, "column_retrieve_and_other_info": { "engine": "gpt-4.1", "bert_model": "all-MiniLM-L6-v2", "device":"cpu", "temperature":0.3, "top_k":10 }, "candidate_generate": { "engine": "gpt-4.1", "temperature":0.7, "n":21, "return_question":"True", "single":"False" }, "align_correct": { "engine": "gpt-4.1", "n":21, "bert_model": "all-MiniLM-L6-v2", "device":"cpu", "align_methods":"style_align+function_align+agent_align" } }',
+            use_checkpoint=False,
+            checkpoint_nodes=None,
+            checkpoint_dir=None,
+            log_level="warning",
+            start=0,
+            end=1
+        )
+        run_manager = RunManager(args)
+        run_manager.initialize_tasks(args.start,args.end,dataset)
+        run_manager.run_tasks()
+        run_manager.generate_sql_files()       
+
         
 
 @hydra.main(config_path="configs", config_name="config", version_base="1.3")
