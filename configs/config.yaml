@@ -12,6 +12,7 @@ data:
 preprocessing:
   used_coref: false
   use_dependency: false
+  opensearch: true
 
 test:
   do_run_test: false
