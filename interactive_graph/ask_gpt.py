@@ -69,26 +69,28 @@ def evaluate_llm_metrix(predictions: list[int], ground_truths: list[int]) -> Non
     print(f"LLM | Accuracy: {accuracy:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1: {f1:.4f}")
     return accuracy, precision, recall, f1
 
-def evaluate_llm_on_graph_dataset(client, deployment, graph_dataset, original_dataset):
+def evaluate_llm_on_graph_dataset(client, deployment, eval_entries):
+    """
+    Evaluates an LLM on a list of dataset entries.
+
+    Args:
+        client: Azure/OpenAI client.
+        deployment: Deployment name or ID for the LLM.
+        eval_entries: List of dataset entries (dicts) to evaluate.
+    """
     questions = []
     ground_truths = []
 
-    for graph in graph_dataset:
-        if hasattr(graph, 'example_index'):
-            idx = graph.example_index  # assume this was attached
-        else:
-            raise AttributeError("Graph is missing 'example_index' linking it to dataset entry")
-
-        entry = original_dataset[idx]
+    for entry in eval_entries:
         question = " ".join(entry["processed_question_toks"])
         label = int(entry.get("is_ambiguous", 0.0))
-
         questions.append(question)
         ground_truths.append(label)
 
-    print(f"\nEvaluating GPT-4 on {len(questions)} examples...")
+    print(f"\nEvaluating LLM on {len(questions)} examples...")
     predictions = ask_questions_sequentially(client, deployment, questions)
     evaluate_llm_metrix(predictions, ground_truths)
+
 
 if __name__ == "__main__":
     client, deployment = get_client()

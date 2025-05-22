@@ -202,15 +202,14 @@ class ShardedGraphDataset(Dataset):
 
 
 def load_or_build_graphs(
-    data_base_dir,
-    dataset_name,
-    mode="train",
-    used_coref=False,
-    use_dependency=False,
-    batch_size=32,
-    overwrite=False,
-    test=False,
-):
+    data_base_dir: str,
+    dataset_name: str,
+    mode: str = "train",  # "train", "dev", "test"
+    used_coref: bool = False,
+    use_dependency: bool = False,
+    batch_size: int = 32,
+    overwrite: bool = False
+) -> tuple:
     """
     Loads preprocessed graphs for a specified dataset from disk, or generates them from scratch
     if they do not exist or if overwrite is True. It returns a DataLoader suitable for training
@@ -231,9 +230,8 @@ def load_or_build_graphs(
             - dataset (list[dict]): Preprocessed dataset entries containing questions and annotations.
             - tables (dict): Processed database schema information.
     """
-    folder_name = "test-data-fitted" if test else "train-data-fitted"
     graph_dir = os.path.join(
-        data_base_dir, "preprocessed_dataset", dataset_name, folder_name, f"{mode}_graphs"
+        data_base_dir, "preprocessed_dataset", dataset_name, f"{mode}_graphs"
     )
     index_path = os.path.join(graph_dir, "index.pt")
 
@@ -241,7 +239,7 @@ def load_or_build_graphs(
     tables_file_path = os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "tables.pkl")
 
     if not os.path.exists(index_path) or overwrite:
-        print("Building graphs from scratch...")
+        print(f"Building graphs from scratch for mode '{mode}'...")
         dataset, tables = generate_preprocessed_relational_data(
             data_base_dir, dataset_name, mode,
             used_coref,
@@ -269,7 +267,7 @@ def load_or_build_graphs(
 
             graph.x = node_embeddings
             graph = clean_graph(graph)
-            graph.example_index = i  # to link with dataset entry
+            graph.example_index = i  # preserve link to dataset
 
             graph_path = os.path.join(graph_dir, f"graph_{i}.pt")
             torch.save(graph, graph_path)
@@ -279,7 +277,6 @@ def load_or_build_graphs(
         print(f"Saved {len(index_file)} graphs to {graph_dir}")
 
     graph_dataset = ShardedGraphDataset(index_path)
-
     dataset = safe_pickle_load(dataset_file_path)
     tables = safe_pickle_load(tables_file_path)
 

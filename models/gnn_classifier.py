@@ -204,3 +204,39 @@ def evaluate(model, loader):
 
     print(f"Our model | Accuracy: {acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1: {f1:.4f}")
     return acc, precision, recall, f1
+
+def get_prediction_results(model, loader, original_entries):
+    """
+    Runs the model on the loader and returns the entries it predicted as True or False.
+
+    Args:
+        model: Trained GNN model.
+        loader: DataLoader with batched graphs
+        original_entries: List of original dataset entries aligned with the graphs.
+
+        
+    Returns:
+        Tuple[List[dict], List[dict]]: (predicted_true_entries, predicted_false_entries)
+    """
+    model.eval()
+    device = next(model.parameters()).device
+    true_entries = []
+    false_entries = []
+
+    index = 0
+
+    with torch.no_grad():
+        for batch in loader:
+            batch = batch.to(device)
+            preds = (model(batch) > 0.5).long().cpu().toList()
+            batch_size = len(preds)
+
+            for i in range(batch_size):
+                entry = original_entries[index]
+                if preds[i] == 1:
+                    true_entries.append(entry)
+                else:
+                    false_entries.append(entry)
+                index += 1
+
+    return true_entries, false_entries
