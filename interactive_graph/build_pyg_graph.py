@@ -272,8 +272,18 @@ def load_or_build_graphs(
         entry_num = 0
         graph_dataset = []
         for i, entry in enumerate(tqdm(dataset, desc="Building graphs")):
-            fp = graph_file_path.split(".")
             db = tables[entry["db_id"]]
+
+            # 🚨 SKIP if the schema is garbage
+            if db.get("processed_table_names") == ["*"] or all(col == "*" for col in db.get("processed_column_names", [])):
+                continue
+            if len(db.get("processed_table_names", [])) == 0 or len(db.get("processed_column_names", [])) <= 1:
+                continue
+
+            # optionally also skip if question is junk
+            if entry.get("processed_question_toks") in ([], ["*"]):
+                continue
+            fp = graph_file_path.split(".")
 
             graph, node_to_idx, idx_to_node = create_graph_from_schema(
                 db, entry)
