@@ -1,13 +1,15 @@
 experiment:
-  name: train_simple_model
+  name: all_experiments
   overwrite: false
   batch_size: 32
-  mode: train
+  mode: dev
 
 data:
   base_dir: data
   spider_dataset_name: spider
   ambiqt_dataset_name: ambiQT
+  bird_dataset_name: Bird
+  ambrosia_dataset_name: ambrosia
 
 preprocessing:
   used_coref: false

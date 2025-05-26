@@ -8,20 +8,20 @@ from OpenSearchSQL.src.database_process.make_emb import make_emb_all
 
 
 def run_opensearch_preprocessing_pipeline():
-    db_root_directory = "data/Bird"
+    db_root_directory = "data/original_dataset/Bird"
     dev_json = "dev/dev.json"
     train_json = "train/train.json"
     dev_table = "dev/dev_tables.json"
     train_table = "train/train_tables.json"
     dev_database = "dev/dev_databases"
     fewshot_llm = "gpt-4.1"
-    DAIL_SQL = "data/Bird/bird_dev.json"
+    DAIL_SQL = "data/original_dataset/Bird/bird_dev.json"
     bert_model = "all-MiniLM-L6-v2"
 
     logging.info(f"Start data_preprocess, the output will be in {db_root_directory}/data_preprocess")
     bird_pre_process(
         bird_dir=db_root_directory,
-        with_evidence=True,
+        with_evidence=False,
         dev_json=dev_json,
         train_json=train_json,
         dev_table=dev_table,
@@ -35,7 +35,7 @@ def run_opensearch_preprocessing_pipeline():
         llm_train_json,
         fewshot_llm,
         start=0,
-        end=9428
+        end=200
     )
 
     logging.info(f"Start generate_questions, output will be in {db_root_directory}/fewshot")

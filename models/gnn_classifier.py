@@ -194,8 +194,9 @@ def evaluate(model, loader):
             batch = batch.to(device)
             preds = (model(batch) > 0.5).long().cpu()
             labels = batch.y.long().cpu()
-            all_preds.extend(preds.tolist())
-            all_labels.extend(labels.tolist())
+
+            all_preds.extend(preds.view(-1).tolist())
+            all_labels.extend(labels.view(-1).tolist())
 
     acc = accuracy_score(all_labels, all_preds)
     precision = precision_score(all_labels, all_preds, pos_label=1)
