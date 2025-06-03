@@ -46,7 +46,7 @@ def run_experiments(cfg: DictConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     ## This should be run once on the environment!!
-    if cfg.preprocessing.opensearch:
+    if not cfg.preprocessing.opensearch:
         run_opensearch_preprocessing_pipeline()
     
     _, ambiqt_graph_dataset, ambiqt_full_dataset, _ = load_or_build_graphs(
@@ -73,16 +73,16 @@ def run_experiments(cfg: DictConfig):
     bird_graph_eval_loader = DataLoader(bird_graph_dataset, batch_size=cfg.experiment.batch_size, shuffle=False)
 
     results = {}
-
     ## Trained on ambiqt
-    print("Results for experiment 1 and 2:")
-    print("ambiqt, bird")
-    model = safe_pickle_load("models/model_out.pkl")
-    acc, prec, rec, f1 = evaluate(model, ambiqt_graph_eval_loader)
-    results['Trained on ambiqt - Evaluated on ambiqt'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
+    if False:
+        print("Results for experiment 1 and 2:")
+        print("ambiqt, bird")
+        model = safe_pickle_load("models/model_out.pkl")
+        acc, prec, rec, f1 = evaluate(model, ambiqt_graph_eval_loader)
+        results['Trained on ambiqt - Evaluated on ambiqt'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
 
-    acc, prec, rec, f1 = evaluate(model, bird_graph_eval_loader)
-    results['Trained on ambiqt - Evaluated on bird'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
+        acc, prec, rec, f1 = evaluate(model, bird_graph_eval_loader)
+        results['Trained on ambiqt - Evaluated on bird'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
 
     ## LLM
     client, deployment = get_client()
@@ -91,7 +91,8 @@ def run_experiments(cfg: DictConfig):
 
     acc, prec, rec, f1 = evaluate_llm_on_graph_dataset(client, deployment, bird_full_dataset)
     results['LLM - Evaluated on bird'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
-    
+    print(results)
+    return    
     print("Results for experiment 3:")
     print("This model is also trained on ambrosia")
     print("ambiqt, bird")
@@ -119,14 +120,14 @@ def run_experiments(cfg: DictConfig):
 
     print("=== Running OpenSearch without ambiguity detection on bird ===")
     run_manager = RunManager(args)
-    run_manager.initialize_tasks(0, len(bird_full_dataset), bird_full_dataset)
+    run_manager.initialize_tasks(23, len(bird_full_dataset), bird_full_dataset)
     run_manager.run_tasks()
     summary_without_ambi = run_manager.statistics_manager.collect_statistics_summary()
     run_manager.generate_sql_files()
 
     print("=== Running OpenSearch with ambiguity detection on bird ===")
     predicted_ambiguous_entries, predicted_unambiguous_entries = get_prediction_results(model, bird_graph_dataset, bird_full_dataset)
-    print(f"GNN predicted {len(predicted_ambiguous_entries)} ambiguous questions. Running OpenSearch with {len(predicted_unambiguous_entries)} / {len(eval_entries)} questions")
+    print(f"GNN predicted {len(predicted_ambiguous_entries)} ambiguous questions. Running OpenSearch with {len(predicted_unambiguous_entries)} / {len(bird_full_dataset)} questions")
     run_manager = RunManager(args)
     run_manager.initialize_tasks(0, len(predicted_unambiguous_entries), predicted_unambiguous_entries)
     run_manager.run_tasks()

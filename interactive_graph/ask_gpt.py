@@ -2,6 +2,7 @@ import os
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from tqdm import tqdm
 
 def get_client():
     load_dotenv()
@@ -21,7 +22,7 @@ def get_client():
 
 def ask_questions_sequentially(client, deployment, questions: list[str]) -> list[int]:
     responses = []
-    for question in questions:
+    for question in tqdm(questions):
         response = client.chat.completions.create(
             messages=[
                 {
@@ -36,7 +37,7 @@ def ask_questions_sequentially(client, deployment, questions: list[str]) -> list
                 {"role": "user", "content": question}
             ],
             max_completion_tokens=50,
-            temperature=1.0,
+            temperature=1,
             top_p=1.0,
             frequency_penalty=0.0,
             presence_penalty=0.0,
@@ -80,7 +81,7 @@ def evaluate_llm_on_graph_dataset(client, deployment, eval_entries):
     questions = []
     ground_truths = []
 
-    for entry in eval_entries[:200]:
+    for entry in eval_entries:
         question = " ".join(entry["processed_question_toks"])
         label = int(entry.get("is_ambiguous", 0))
         questions.append(question)
