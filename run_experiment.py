@@ -1,4 +1,6 @@
 import argparse
+from datetime import datetime
+import json
 import hydra
 import torch
 from itertools import product
@@ -39,14 +41,15 @@ def get_eval_question_entries(graph_dataset, original_dataset):
 
     return eval_ids, eval_entries
 
-def run_experiments(cfg: DictConfig, do_train: bool, out: str, test=False):
+
+def run_experiments(cfg: DictConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ### Run preprocessing for OpenSearch ###
-    if cfg.preprocessing.opensearch:
+
+    ## This should be run once on the environment!!
+    if not cfg.preprocessing.opensearch:
         run_opensearch_preprocessing_pipeline()
     
-    ### Load full graph dataset for train/eval ###
-    _, graph_dataset, full_dataset, _ = load_or_build_graphs(
+    _, ambiqt_graph_dataset, ambiqt_full_dataset, _ = load_or_build_graphs(
         data_base_dir=cfg.data.base_dir,
         dataset_name=cfg.data.ambiqt_dataset_name,
         mode=cfg.experiment.mode,
@@ -55,48 +58,57 @@ def run_experiments(cfg: DictConfig, do_train: bool, out: str, test=False):
         used_coref=cfg.preprocessing.used_coref,
         use_dependency=cfg.preprocessing.use_dependency,
     )
+    _, bird_graph_dataset, bird_full_dataset, _ = load_or_build_graphs(
+        data_base_dir=cfg.data.base_dir,
+        dataset_name=cfg.data.bird_dataset_name,
+        mode=cfg.experiment.mode,
+        batch_size=cfg.experiment.batch_size,
+        overwrite=cfg.experiment.overwrite,
+        used_coref=cfg.preprocessing.used_coref,
+        use_dependency=cfg.preprocessing.use_dependency,
+    )
 
 
-    if test:
-        # === Run in test mode ===
-        loader = DataLoader(graph_dataset, batch_size=cfg.experiment.batch_size, shuffle=False)
-        model = safe_pickle_load(out)
-        acc = evaluate(model, loader)
-        print(f"Test Accuracy: {acc:.4f}")
-        return
-    
-    ### Prepare dataset splits ###
-    total_size = len(graph_dataset)
-    indices = list(range(total_size))
-    torch.manual_seed(42)
-    indices = torch.randperm(total_size).tolist()
-    split_idx = int(0.8 * total_size)
-    train_indices = indices[:split_idx]
-    eval_indices = indices[split_idx:]
+    ambiqt_graph_eval_loader = DataLoader(ambiqt_graph_dataset, batch_size=cfg.experiment.batch_size, shuffle=False)
+    bird_graph_eval_loader = DataLoader(bird_graph_dataset, batch_size=cfg.experiment.batch_size, shuffle=False)
 
-    train_graphs = [graph_dataset[i] for i in train_indices]
-    eval_graphs = [graph_dataset[i] for i in eval_indices]
+    results = {}
+    ## Trained on ambiqt
+    if False:
+        print("Results for experiment 1 and 2:")
+        print("ambiqt, bird")
+        model = safe_pickle_load("models/model_out.pkl")
+        acc, prec, rec, f1 = evaluate(model, ambiqt_graph_eval_loader)
+        results['Trained on ambiqt - Evaluated on ambiqt'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
 
-    train_entries = [full_dataset[i] for i in train_indices]
-    eval_entries = [full_dataset[i] for i in eval_indices]
+        acc, prec, rec, f1 = evaluate(model, bird_graph_eval_loader)
+        results['Trained on ambiqt - Evaluated on bird'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
 
-    train_loader = DataLoader(train_graphs, batch_size=cfg.experiment.batch_size, shuffle=True)
-    eval_loader = DataLoader(eval_graphs, batch_size=cfg.experiment.batch_size, shuffle=False)
-
-    ### Train and evaluate GNN ###
-    model = GNNClassifier(in_dim=768, hidden_dim=256, num_layers=2).to(device)
-    train(model, train_loader, val_loader=eval_loader, epochs=200, lr=1e-2)
-    model_acc, model_precision, model_recall, model_f1 = evaluate(model, eval_loader)
-    safe_pickle_save(model, out)
-
-    ### LLM ###
+    ## LLM
     client, deployment = get_client()
-    evaluate_llm_on_graph_dataset(client, deployment, eval_entries)
+    acc, prec, rec, f1 = evaluate_llm_on_graph_dataset(client, deployment, ambiqt_full_dataset)
+    results['LLM - Evaluated on ambiqt'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
+
+    acc, prec, rec, f1 = evaluate_llm_on_graph_dataset(client, deployment, bird_full_dataset)
+    results['LLM - Evaluated on bird'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
+    print(results)
+    return    
+    print("Results for experiment 3:")
+    print("This model is also trained on ambrosia")
+    print("ambiqt, bird")
+
+    ## Trained on cross
+    cross_trained_model = safe_pickle_load("models/model_out_with_ambrosia.pkl")
+    acc, prec, rec, f1 = evaluate(cross_trained_model, ambiqt_graph_eval_loader)
+    results['Cross trained - Evaluated on ambiqt'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
+
+    acc, prec, rec, f1 = evaluate(cross_trained_model, bird_graph_eval_loader)
+    results['Cross trained - Evaluated on bird'] = {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1}
 
     ### OpenSearch ###
     args = argparse.Namespace(
         data_mode="dev",
-        db_root_path="Bird",
+        db_root_path="data/original_dataset/Bird",
         pipeline_nodes="generate_db_schema+extract_col_value+extract_query_noun+column_retrieve_and_other_info+candidate_generate+align_correct+vote+evaluation",
         pipeline_setup='{ "generate_db_schema": { "engine": "gpt-4.1", "bert_model": "all-MiniLM-L6-v2", "device":"cpu" }, "extract_col_value": { "engine": "gpt-4.1", "temperature":0.0 }, "extract_query_noun": { "engine": "gpt-4.1", "temperature":0.0 }, "column_retrieve_and_other_info": { "engine": "gpt-4.1", "bert_model": "all-MiniLM-L6-v2", "device":"cpu", "temperature":0.3, "top_k":10 }, "candidate_generate": { "engine": "gpt-4.1", "temperature":0.7, "n":21, "return_question":"True", "single":"False" }, "align_correct": { "engine": "gpt-4.1", "n":21, "bert_model": "all-MiniLM-L6-v2", "device":"cpu", "align_methods":"style_align+function_align+agent_align" } }',
         use_checkpoint=False,
@@ -104,27 +116,37 @@ def run_experiments(cfg: DictConfig, do_train: bool, out: str, test=False):
         checkpoint_dir=None,
         log_level="warning",
     )
-    print("=== Running OpenSearch without ambiguity detection ===")
+    args.run_start_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+
+    print("=== Running OpenSearch without ambiguity detection on bird ===")
     run_manager = RunManager(args)
-    run_manager.initialize_tasks(0, len(eval_entries), eval_entries)
+    run_manager.initialize_tasks(23, len(bird_full_dataset), bird_full_dataset)
     run_manager.run_tasks()
+    summary_without_ambi = run_manager.statistics_manager.collect_statistics_summary()
     run_manager.generate_sql_files()
 
-    print("=== Running OpenSearch with ambiguity detection ===")
-    predicted_ambiguous_entries, predicted_unambiguous_entries = get_prediction_results(model, eval_loader, eval_entries)
-    print(f"GNN predicted {len(predicted_ambiguous_entries)} ambiguous questions. Running OpenSearch with {len(predicted_unambiguous_entries)} / {len(eval_entries)} questions")
+    print("=== Running OpenSearch with ambiguity detection on bird ===")
+    predicted_ambiguous_entries, predicted_unambiguous_entries = get_prediction_results(model, bird_graph_dataset, bird_full_dataset)
+    print(f"GNN predicted {len(predicted_ambiguous_entries)} ambiguous questions. Running OpenSearch with {len(predicted_unambiguous_entries)} / {len(bird_full_dataset)} questions")
     run_manager = RunManager(args)
     run_manager.initialize_tasks(0, len(predicted_unambiguous_entries), predicted_unambiguous_entries)
     run_manager.run_tasks()
+    summary_with_ambi = run_manager.statistics_manager.collect_statistics_summary()
     run_manager.generate_sql_files()
 
+    results['OpenSearch - no prediction'] = summary_without_ambi['overall_accuracy']
+    results['OpenSearch - with prediction'] = summary_with_ambi['overall_accuracy']
+    
+    print(results)
+    with open("results.json", "w") as f:
+        json.dump(results, f, indent=4)
 
 
 @hydra.main(config_path="configs", config_name="config", version_base="1.3")
 def main(cfg: DictConfig):
     print(f"Starting experiment: {cfg.experiment.name}")
     do_train, out = True, "./models/gnn_trained/model_out.pkl"
-    run_experiments(cfg, True, out, False)
+    run_experiments(cfg)
 
 
 if __name__ == "__main__":

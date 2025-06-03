@@ -7,6 +7,7 @@ from itertools import combinations, product
 from nltk.corpus import stopwords
 from utils.safe_file import safe_json_load, safe_pickle_save, safe_pickle_load
 from stanza.pipeline.core import DownloadMethod
+import gc
 
 from .tree import Tree
 from .constants import MAX_RELATIVE_DIST
@@ -140,7 +141,8 @@ def normalize_and_build_schema_relations(db: dict):
     cols, tabs = list(zip(*list(map(lambda x: (x, column2table[x]), range(1, c_num))))) # ignore *
     col_tab_mat[cols, tabs], tab_col_mat[tabs, cols] = 'column-table-has', 'table-column-has'
     if len(db['primary_keys']) > 0:
-        cols, tabs = list(zip(*list(map(lambda x: (x, column2table[x]), db['primary_keys']))))
+        flat_primary_keys = [col for pk in db['primary_keys'] for col in (pk if isinstance(pk, list) else [pk])]
+        cols, tabs = list(zip(*[(col, column2table[col]) for col in flat_primary_keys]))
         col_tab_mat[cols, tabs], tab_col_mat[tabs, cols] = 'column-table-pk', 'table-column-pk'
     col_tab_mat[0, list(range(t_num))] = '*-table-generic'
     tab_col_mat[list(range(t_num)), 0] = 'table-*-generic'
@@ -155,11 +157,20 @@ def normalize_and_build_schema_relations(db: dict):
 
 def preprocess_natural_language_question( entry: dict, dataset_name: str, data_idx: int):
     """ Tokenize, lemmatize, lowercase question"""
-    question = " ".join(quote_normalization(dataset_name, data_idx, entry["question_toks"]))
-    entry["processed_text_list"] = [question]
-    question = question.strip()
+    if dataset_name.lower() == "bird":
+        raw_question = entry["question"]
+        raw_question.strip()
+        doc = nlp_tokenize(raw_question)
+        question_toks = [w.text for s in doc.sentences for w in s.words]
+        question = " ".join(quote_normalization(dataset_name, data_idx, question_toks))
+    else:
+        question_toks = entry["question_toks"]
+        question = " ".join(quote_normalization(dataset_name, data_idx, question_toks))
+        question.strip()
+        doc = nlp_tokenize(question)
 
-    doc = nlp_tokenize(question)
+    entry["processed_text_list"] = [question]
+
     raw_toks = [w.text.lower() for s in doc.sentences for w in s.words]
     toks = [w.lemma.lower() for s in doc.sentences for w in s.words]
     entry[f'raw_question_toks'] = raw_toks
@@ -167,6 +178,8 @@ def preprocess_natural_language_question( entry: dict, dataset_name: str, data_i
     entry[f'processed_question_toks'] = toks
     # print(question, [w.text for s in doc.sentences for w in s.words])
     # TOOD: Pretty sure this is just used for coref, but for now we will keep it but just use 0 instead of turn
+    if "final_preprocessed_text_list" not in entry:
+        entry["final_preprocessed_text_list"] = []
     entry["final_preprocessed_text_list"].append([0, [w.text for s in doc.sentences for w in s.words], len([w.text for s in doc.sentences for w in s.words])])
     # relations in questions, q_num * q_num
     q_num, dtype = len(toks), '<U100'
@@ -189,10 +202,15 @@ def preprocess_natural_language_question( entry: dict, dataset_name: str, data_i
     return entry
 
 
-def schema_linking(entry: dict, db: dict):
+def schema_linking(entry: dict, db: dict, dataset_name):
         """ Perform schema linking: both question and database need to be preprocessed """
         # Todo: Change the db_dir to actual db location once dataset is in. Kind of curesd that it is hard coded here
-        db_dir = "data/original_dataset/spider/database"
+        if dataset_name in ["spider", "ambiQT"]:
+            db_dir = "data/original_dataset/spider/database"
+        elif dataset_name == "Bird":
+            db_dir = "data/original_dataset/Bird/dev/dev_databases"
+        elif dataset_name =="ambrosia":
+            db_dir = "data/original_dataset/AMBROSIA/database"
         db_content = True
         raw_question_toks, question_toks = entry[f'raw_question_toks'], entry[f'processed_question_toks']
         table_toks, column_toks = db['processed_table_toks'], db['processed_column_toks']
@@ -273,7 +291,7 @@ def schema_linking(entry: dict, db: dict):
 def run_preprocessing_pipeline_on_entry(entry: dict, db: dict, dataset_name: str, data_idx: int):
     entry["final_preprocessed_text_list"] = []
     entry = preprocess_natural_language_question(entry, dataset_name, data_idx)
-    entry = schema_linking(entry, db)
+    entry = schema_linking(entry, db, dataset_name)
     return entry
 
 
@@ -295,9 +313,9 @@ def process_dataset_entries(dataset, tables, dataset_name, mode, output_path_bas
     if used_coref and not os.path.exists(os.path.join(output_path_base, f"{mode}_coref.json")):
         wfile = open(os.path.join(output_path_base, f"{mode}_text_list.txt"), "w")
     for idx, entry in tqdm(enumerate(dataset)):
-        # if idx > 100:
-        #     continue
-        if dataset_name in ["spider", "ambiQT"]:
+        if idx % 100 == 0:
+            gc.collect()
+        if dataset_name in ["spider", "ambiQT", "Bird", "AMBROSIA"]:
             entry = run_preprocessing_pipeline_on_entry(entry, tables[entry['db_id']], dataset_name, idx)
         elif dataset_name in ["cosql", "sparc"]:
             entry = run_preprocessing_pipeline_on_entry(entry, tables[entry['database_id']], dataset_name, idx)
@@ -327,7 +345,9 @@ def get_dataset_file_paths(data_base_dir, dataset_name, mode):
         elif dataset_name == "sparc":
             dataset_path = os.path.join(data_base_dir, "original_dataset", dataset_name, "train.json")
         elif dataset_name == "ambiQT":
-            dataset_path = os.path.join(data_base_dir, "original_dataset", dataset_name, "ambiqt_data.json") # TODO: change to train later
+            dataset_path = os.path.join(data_base_dir, "original_dataset", dataset_name, "ambiqt_data.json")
+        elif dataset_name == "AMBROSIA":
+            dataset_path = os.path.join(data_base_dir, "original_dataset", dataset_name, "AMBROSIA_data.json")
         else:
             raise NotImplementedError
         # dataset_output_path_base=os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "train.pkl")
@@ -338,7 +358,11 @@ def get_dataset_file_paths(data_base_dir, dataset_name, mode):
             db_dir = os.path.join(data_base_dir, "original_dataset", "cosql_dataset", "database")
             dataset_path=os.path.join(data_base_dir, "original_dataset", "cosql_dataset/sql_state_tracking/", "cosql_dev.json")
             table_data_path=os.path.join(data_base_dir, "original_dataset", "cosql_dataset", "tables.json")
-            
+        elif dataset_name == "ambiQT":
+            dataset_path = os.path.join(data_base_dir, "original_dataset", dataset_name, "ambiqt_data_dev.json")
+        elif dataset_name == "Bird":
+            dataset_path = os.path.join(data_base_dir, "original_dataset", dataset_name, "ambi_dev", "new_questions_with_ambiguity.json")
+            table_data_path=os.path.join(data_base_dir, "original_dataset", dataset_name, "ambi_dev", "dev_table_for_new_questions.json")
         else:
             raise NotImplementedError
         # dataset_output_path=os.path.join(data_base_dir, "preprocessed_dataset", dataset_name, "dev.pkl")
