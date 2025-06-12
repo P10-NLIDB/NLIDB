@@ -1,62 +1,94 @@
-# models/gnn_classifier.py
-
 from sklearn.metrics import precision_score, recall_score, accuracy_score, f1_score
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GCNConv, GATConv, global_mean_pool, global_add_pool, RGCNConv
 from torch_geometric.nn import GATConv
 from copy import deepcopy
 
 import torch
 import torch.nn.functional as F
 from torch.nn import Dropout
-from torch_geometric.nn import GATConv, global_mean_pool
-
 
 class GNNClassifier(torch.nn.Module):
     def __init__(self, in_dim, hidden_dim=64, num_layers=2, heads=4, dropout=0.3):
         super().__init__()
         self.convs = torch.nn.ModuleList()
+        self.norms = torch.nn.ModuleList()
         self.dropout = Dropout(dropout)
 
         self.heads = heads
-        self.concat = False
+        self.concat = True  # Use concatenation for richer representation
+
+        # First layer
+        self.convs.append(GATConv(in_dim, hidden_dim, heads=heads, concat=self.concat, dropout=dropout))
+        out_dim = hidden_dim * heads if self.concat else hidden_dim
+        self.norms.append(torch.nn.LayerNorm(out_dim))
+
+        # Hidden layers
+        for _ in range(num_layers - 1):
+            self.convs.append(GATConv(out_dim, hidden_dim, heads=heads, concat=self.concat, dropout=dropout))
+            out_dim = hidden_dim * heads if self.concat else hidden_dim
+            self.norms.append(torch.nn.LayerNorm(out_dim))
+
+        # Classifier
+        self.classifier = torch.nn.Linear(out_dim, 1)
+
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+
+        for conv, norm in zip(self.convs, self.norms):
+            x = conv(x, edge_index)
+            x = norm(x)
+            x = F.elu(x)
+            x = self.dropout(x)
+
+        x = global_add_pool(x, batch)
+        x = self.dropout(x)
+        out = self.classifier(x)
+        return out.view(-1)  # Return raw logits
+    
+
+class EdgeTypeAwareGNN(torch.nn.Module):
+    def __init__(self, in_dim, hidden_dim=64, num_relations=10, num_layers=2, dropout=0.3):
+        super().__init__()
+        self.convs = torch.nn.ModuleList()
+        self.dropout = torch.nn.Dropout(dropout)
 
         self.convs.append(
-            GATConv(in_dim, hidden_dim, heads=heads,
-                    concat=self.concat, dropout=dropout)
+            RGCNConv(in_dim, hidden_dim, num_relations=num_relations)
         )
 
         for _ in range(num_layers - 1):
             self.convs.append(
-                GATConv(hidden_dim, hidden_dim, heads=heads,
-                        concat=self.concat, dropout=dropout)
+                RGCNConv(hidden_dim, hidden_dim, num_relations=num_relations)
             )
 
         self.classifier = torch.nn.Linear(hidden_dim, 1)
 
     def forward(self, data):
-        x, edge_index, batch = data.x, data.edge_index, data.batch
+        x, edge_index, edge_type, batch = data.x, data.edge_index, data.edge_type, data.batch
 
         for conv in self.convs:
-            x = conv(x, edge_index)
-            x = F.elu(x)
+            x = conv(x, edge_index, edge_type)
+            x = F.relu(x)
             x = self.dropout(x)
 
         x = global_mean_pool(x, batch)
-        x = self.dropout(x)
-        out = self.classifier(x)
-        return out.view(-1)  # Return raw logits
+        x = self.classifier(x)
+        return x.view(-1)  # raw logits
+
 
 
 def train(model, train_loader, val_loader, epochs=50, lr=1e-3, patience=15):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    # Increase weight for positive class to improve recall
-    pos_weight = torch.tensor([2.0]).to(device)
-    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    # Estimate class imbalance
+    num_pos = sum(batch.y.sum().item() for batch in train_loader)
+    num_total = sum(batch.y.numel() for batch in train_loader)
+    pos_weight = torch.tensor([(num_total - num_pos) / (num_pos + 1e-5)]).to(device)
 
+    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     best_agg = 0
@@ -79,8 +111,8 @@ def train(model, train_loader, val_loader, epochs=50, lr=1e-3, patience=15):
 
         print(f"Epoch {epoch}/{epochs} | Loss: {total_loss / len(train_loader):.4f}")
 
-        acc, prec, rec, f1 = evaluate(model, val_loader, threshold=0.3)
-        agg = (acc + prec + rec + f1)/4
+        acc, prec, rec, f1 = evaluate(model, val_loader, threshold=0.2)
+        agg = (acc + prec + rec + f1) / 4
 
         if agg > best_agg:
             best_agg = agg
@@ -96,8 +128,6 @@ def train(model, train_loader, val_loader, epochs=50, lr=1e-3, patience=15):
     print(f"Best model was from epoch {best_epoch} with aggregate score {best_agg:.4f}")
     model.load_state_dict(best_model_state)
     return model
-
-
 
 def evaluate(model, loader, threshold=0.3):
     model.eval()
